@@ -591,22 +591,22 @@ void web_crawl() {
 }
 
 void get_url() {
-	RECV_BUF *recv_buf;
-	for (int i = 0; i < conc_num; i++) {
-		if (curl_handles[i].url[0] == '\0') {
-			char *frontier_url = strdup(frontier_list->url);
-			pop_frontiers();
-			recv_buf = malloc(sizeof(RECV_BUF));
-			recv_buf_init(recv_buf, BUF_SIZE);
-			curl_handles[i].curl = curl_easy_init();
-			curl_handles[i].buf = recv_buf;
-			strcpy(curl_handles[i].url, frontier_url);
-			printf("popped url: %s\n", curl_handles[i].url);
-			easy_handle_init(curl_handles[i].curl, curl_handles[i].buf,curl_handles[i].url); 
-			free(frontier_url);
-		}
-		if (frontier_list == NULL) break;
-	}
+    RECV_BUF *recv_buf;
+    for (int i = 0; i < conc_num; i++) {
+	    if (curl_handles[i].url[0] == '\0') {
+		    char *frontier_url = strdup(frontier_list->url);
+		    pop_frontiers();
+		    recv_buf = malloc(sizeof(RECV_BUF));
+		    recv_buf_init(recv_buf, BUF_SIZE);
+		    curl_handles[i].curl = curl_easy_init();
+		    curl_handles[i].buf = recv_buf;
+		    strcpy(curl_handles[i].url, frontier_url);
+		    printf("popped url: %s\n", curl_handles[i].url);
+		    easy_handle_init(curl_handles[i].curl, curl_handles[i].buf,curl_handles[i].url); 
+		    free(frontier_url);
+	    }
+	    if (frontier_list == NULL) break;
+    }
 }
 
 void write_png(){
