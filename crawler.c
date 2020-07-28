@@ -537,6 +537,8 @@ void init_url(url_node *url, char *data) {
     url->next = NULL;
     if (data != NULL) {
         strcpy(url->url, data);
+    } else {
+        url -> url[0] = '\0';
     }
 }
 
