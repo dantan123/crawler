@@ -13,6 +13,8 @@
 #include <time.h>
 #include <sys/time.h>
 
+#define SEED_URL "http://ece252-1.uwaterloo.ca/lab5/"
+#define ECE252_HEADER "X-Ece252-Fragment: "
 #define BUF_SIZE 1048576  /* 1024*1024 = 1M */
 #define BUF_INC  524288   /* 1024*512  = 0.5M */
 
@@ -20,7 +22,6 @@
 #define CT_HTML "text/html"
 #define CT_PNG_LEN 9
 #define CT_HTML_LEN 9
-
 
 #define max(a, b) \
    ({ __typeof__ (a) _a = (a); \
