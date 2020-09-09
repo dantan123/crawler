@@ -1,3 +1,3 @@
 # Crawler
 
-Asynchronous I/O with cURL for web crawling png files; done in collaboration
+Asynchronous I/O with cURL for web crawling png files, done in collaboration.

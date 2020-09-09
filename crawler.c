@@ -23,6 +23,7 @@
 #define CT_PNG_LEN 9
 #define CT_HTML_LEN 9
 
+
 #define max(a, b) \
    ({ __typeof__ (a) _a = (a); \
        __typeof__ (b) _b = (b); \
@@ -33,7 +34,7 @@ typedef struct recv_buf2 {
     size_t size;     /* size of valid data in buf in bytes*/
     size_t max_size; /* max capacity of buf in bytes*/
     int seq;         /* >=0 sequence number extracted from http header */
-                     /* <0 indicates an invalid seq number */
+    /* <0 indicates an invalid seq number */
 } RECV_BUF;
 
 typedef struct url_node2 {
@@ -53,6 +54,7 @@ int conc_num;
 char* log_file;
 url_node *png_list;
 url_node *frontier_list;
+url_node *visited_list;
 struct hsearch_data *htab;
 CURLM *cm = NULL;
 connection *curl_handles;
@@ -78,6 +80,7 @@ int is_png(RECV_BUF *data);
 void free_list(url_node *list);
 void add_visited(char *url);
 void cleanup_handles();
+void cleanup_htab();
 int find_connection(CURL* url);
 void get_url();
 
@@ -87,7 +90,7 @@ void pop_frontiers();
 
 /* main */
 int main(int argc, char** argv) {
-	char url[256];
+    char url[256];
     int c;
     conc_num = 1; /* max num of concurrent connections */
     png_num = 50; /* number of unique png files to find */
@@ -98,29 +101,29 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-	/* parse command line arguments */
+    /* parse command line arguments */
     while ((c = getopt (argc, argv, "t:m:v:")) != -1) {
         switch (c) {
-        case 't':
-			/* convert string to an unsigned long int */
-            conc_num = strtoul(optarg, NULL, 10);
-            if (conc_num < 1) {
-                printf("%s: conc_num error - max number of concurrent connections cannot be less than 1\n", argv[0]);
-                return EXIT_FAILURE;
-            }
-            break;
-        case 'm':
-            png_num = strtoul(optarg, NULL, 10);
-            if (png_num < 0) {
-                printf("%s: png_num error - the number of unique png urls cannot be less than 0\n", argv[0]);
-                return EXIT_FAILURE;
-            }
-            break;
-        case 'v':
-            log_file = optarg;
-            break;
-        default:
-            break;
+            case 't':
+                /* convert string to an unsigned long int */
+                conc_num = strtoul(optarg, NULL, 10);
+                if (conc_num < 1) {
+                    printf("%s: conc_num error - max number of concurrent connections cannot be less than 1\n", argv[0]);
+                    return EXIT_FAILURE;
+                }
+                break;
+            case 'm':
+                png_num = strtoul(optarg, NULL, 10);
+                if (png_num < 0) {
+                    printf("%s: png_num error - the number of unique png urls cannot be less than 0\n", argv[0]);
+                    return EXIT_FAILURE;
+                }
+                break;
+            case 'v':
+                log_file = optarg;
+                break;
+            default:
+                break;
         }
     }
 
@@ -130,19 +133,21 @@ int main(int argc, char** argv) {
     }
 
     if (optind < argc){
-		strcpy(url, argv[optind]);
-	}
+        strcpy(url, argv[optind]);
+    }
 
     /* initialize global lists */
     png_list = malloc(sizeof(url_node)); /* list of valid urls */
     frontier_list = malloc(sizeof(url_node)); /* list of urls to visit */
+    visited_list = malloc(sizeof(url_node)); /* list of visited urls */
     htab = calloc(1, sizeof(struct hsearch_data)); /* list of visited urls */
     init_url(png_list, NULL);
     init_url(frontier_list, url);
-    hcreate_r(1000, htab); 
+    init_url(visited_list, NULL);
+    hcreate_r(1000, htab);
 
     /* setup multi curl */
-	curl_global_init(CURL_GLOBAL_ALL);
+    curl_global_init(CURL_GLOBAL_ALL);
     cm = curl_multi_init();
     curl_handles = malloc(sizeof(connection)*conc_num);
     for (int i = 0; i < conc_num; i++) {
@@ -156,14 +161,14 @@ int main(int argc, char** argv) {
     }
 
     /* start timer */
-	struct timeval tv;
-	double times[2];
-	if (gettimeofday(&tv,NULL) != 0) {
-			perror("gettimeofday");
-			abort();
-	}
-	times[0] = (tv.tv_sec) + tv.tv_usec/1000000.;
-    
+    struct timeval tv;
+    double times[2];
+    if (gettimeofday(&tv,NULL) != 0) {
+        perror("gettimeofday");
+        abort();
+    }
+    times[0] = (tv.tv_sec) + tv.tv_usec/1000000.;
+
     /* search for pngs */
     web_crawl();
 
@@ -178,19 +183,19 @@ int main(int argc, char** argv) {
     times[1] = (tv.tv_sec) + tv.tv_usec/1000000.;
     printf("findpng3 execution time: %.6lf seconds\n", times[1] - times[0]);
 
-	/* clean up */
+    /* clean up */
     xmlCleanupParser();
     cleanup();
-	return 0;
+    return 0;
 }
 
 /* API */
 /* parse an XML in-memory document and build a tree using read memory */
 htmlDocPtr mem_getdoc (char *buf, int size, const char *url) {
-	int opts = HTML_PARSE_NOBLANKS | HTML_PARSE_NOERROR | \
+    int opts = HTML_PARSE_NOBLANKS | HTML_PARSE_NOERROR | \
                HTML_PARSE_NOWARNING | HTML_PARSE_NONET;
     htmlDocPtr doc = htmlReadMemory(buf, size, url, NULL, opts);
-    
+
     if ( doc == NULL ) {
         /* fprintf(stderr, "Document not parsed successfully.\n"); */
         return NULL;
@@ -198,21 +203,21 @@ htmlDocPtr mem_getdoc (char *buf, int size, const char *url) {
     return doc;
 }
 
-xmlXPathObjectPtr getnodeset (xmlDocPtr doc, xmlChar *xpath) {	
+xmlXPathObjectPtr getnodeset (xmlDocPtr doc, xmlChar *xpath) {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
 
-	/* create a new XML context */
+    /* create a new XML context */
     context = xmlXPathNewContext(doc);
     if (context == NULL) {
         printf("Error in xmlXPathNewContext\n");
         return NULL;
     }
 
-	/* evaluate the XPath Location Path in the given context */
+    /* evaluate the XPath Location Path in the given context */
     result = xmlXPathEvalExpression(xpath, context);
 
-	/* free up the context */
+    /* free up the context */
     xmlXPathFreeContext(context);
 
     if (result == NULL) {
@@ -232,25 +237,31 @@ void push_frontiers(char *href) {
     init_url(push_url, href);
     push_url->next = frontier_list;
     frontier_list = push_url; /* set new url as the head of the frontier stack */
-    printf("%s is pushed onto the frontier stack\n", frontier_list->url);
+    /* printf("%s is pushed onto the frontier stack\n", frontier_list->url); */
 }
 
 void pop_frontiers() {
     url_node *temp = frontier_list;
     frontier_list = frontier_list->next;
-	free(temp);
+    free(temp);
 }
 
 void add_visited(char *url) {
-	ENTRY *item = calloc(1,sizeof(ENTRY));
-	ENTRY *retval = item;
-    item->key = strdup(url);
+    url_node *new_url = malloc(sizeof(url_node));
+    init_url(new_url, url);
+    new_url->next = visited_list;
+    visited_list = new_url;
+
+    ENTRY *item = calloc(1,sizeof(ENTRY));
+    ENTRY *retval = item;
+    item->key = visited_list->url;
     item->data = NULL;
     hsearch_r(*item,ENTER,&retval,htab);
     /* printf("item added to the visited hash table %s\n", item->key); */
     if (log_file != NULL) {
         write_log(log_file, item->key);
     }
+    free(item);
 }
 
 int find_http(CURL* curl_handle, RECV_BUF *p_recv_buf, const char *base_url)
@@ -263,26 +274,26 @@ int find_http(CURL* curl_handle, RECV_BUF *p_recv_buf, const char *base_url)
     xmlChar *href;
     ENTRY item;
     ENTRY *retval;
-	char *buf = p_recv_buf->buf;
-	int size = p_recv_buf->size;
+    char *buf = p_recv_buf->buf;
+    int size = p_recv_buf->size;
 
     if (buf == NULL) {
         return 1;
     }
 
-	/* call mem_getdoc to parse the XML */
-	doc = mem_getdoc(buf, size, base_url);
-	
-	/* evaluate the Xpath location path */
+    /* call mem_getdoc to parse the XML */
+    doc = mem_getdoc(buf, size, base_url);
+
+    /* evaluate the Xpath location path */
     result = getnodeset(doc, xpath);
 
     if (result) {
         nodeset = result->nodesetval;
 
-		/* traverse through the number of node */
+        /* traverse through the number of node */
         for (i=0; i < nodeset->nodeNr; i++) {
 
-			/* get the href */
+            /* get the href */
             href = xmlNodeListGetString(doc, nodeset->nodeTab[i]->xmlChildrenNode, 1);
 
             if ( href != NULL && !strncmp((const char *)href, "http", 4) ) {
@@ -297,10 +308,10 @@ int find_http(CURL* curl_handle, RECV_BUF *p_recv_buf, const char *base_url)
                     push_frontiers(new_href);
                 }
                 free(new_href);
-				xmlFree(href);	
-			}
-		}
-		xmlXPathFreeObject(result);
+            }
+            xmlFree(href);
+        }
+        xmlXPathFreeObject(result);
     }
     xmlFreeDoc(doc);
     return 0;
@@ -315,27 +326,27 @@ size_t header_cb_curl(char *p_recv, size_t size, size_t nmemb, void *userdata) {
     /* printf("%s", p_recv); */
 #endif /* DEBUG1_ */
     if (realsize > strlen(ECE252_HEADER) &&
-	strncmp(p_recv, ECE252_HEADER, strlen(ECE252_HEADER)) == 0) {
-    	/* extract img sequence number */
-		p->seq = atoi(p_recv + strlen(ECE252_HEADER));
+        strncmp(p_recv, ECE252_HEADER, strlen(ECE252_HEADER)) == 0) {
+        /* extract img sequence number */
+        p->seq = atoi(p_recv + strlen(ECE252_HEADER));
     }
     return realsize;
 }
 
 /* write callback to save a copy of received data in RAM */
 size_t write_cb_curl3(char *p_recv, size_t size, size_t nmemb, void *p_userdata) {
-    size_t realsize = size * nmemb; 
+    size_t realsize = size * nmemb;
     RECV_BUF *p = (RECV_BUF *)p_userdata; /* save a copy of the received data */
- 
-    if (p->size + realsize + 1 > p->max_size) {/* hope this rarely happens */ 
+
+    if (p->size + realsize + 1 > p->max_size) {/* hope this rarely happens */
         /* received data is not 0 terminated, add one byte for terminating 0 */
-        size_t new_size = p->max_size + max(BUF_INC, realsize + 1);   
+        size_t new_size = p->max_size + max(BUF_INC, realsize + 1);
         char *q = realloc(p->buf, new_size);
         if (q == NULL) {
             perror("realloc"); /* out of memory */
             return -1;
         }
-		/* reassign p->buf and p->max_size */
+        /* reassign p->buf and p->max_size */
         p->buf = q;
         p->max_size = new_size;
     }
@@ -366,22 +377,23 @@ int recv_buf_cleanup(RECV_BUF *ptr) {
     ptr->buf = NULL;
     ptr->size = 0;
     ptr->max_size = 0;
+    free(ptr);
+    ptr = NULL;
     return 0;
 }
 
 void cleanup() {
     cleanup_handles();
     curl_multi_cleanup(cm);
-	curl_global_cleanup();
+    curl_global_cleanup();
     free_list(png_list);
     free_list(frontier_list);
-	hdestroy_r(htab);
-	free(htab);
+    cleanup_htab();
 }
 
-void free_list(url_node *list) { 
+void free_list(url_node *list) {
     url_node *temp;
-    while (list != NULL) { 
+    while (list != NULL) {
         memset(list->url, 0, sizeof(list->url));
         temp = list;
         list = list->next;
@@ -400,6 +412,12 @@ void cleanup_handles(){
     free(curl_handles);
 }
 
+void cleanup_htab() {
+    free_list(visited_list);
+    hdestroy_r(htab);
+    free(htab);
+}
+
 /**
  * @brief create a curl easy handle and set the options.
  * @param RECV_BUF *ptr points to user data needed by the curl write call back function
@@ -416,16 +434,16 @@ void easy_handle_init(CURL* curl_handle, RECV_BUF *ptr, char *url) {
     }
 
     /* register write call back function to process received data */
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_cb_curl3); 
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_cb_curl3);
     /* user defined data structure passed to the call back function */
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)ptr);
 
     /* register header call back function to process received header data */
-    curl_easy_setopt(curl_handle, CURLOPT_HEADERFUNCTION, header_cb_curl); 
+    curl_easy_setopt(curl_handle, CURLOPT_HEADERFUNCTION, header_cb_curl);
     /* user defined data structure passed to the call back function */
     curl_easy_setopt(curl_handle, CURLOPT_HEADERDATA, (void *)ptr);
 
-	/* some servers requires a user-agent field */
+    /* some servers requires a user-agent field */
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "ece252 lab5 crawler");
 
     /* follow HTTP 3XX redirects */
@@ -437,7 +455,7 @@ void easy_handle_init(CURL* curl_handle, RECV_BUF *ptr, char *url) {
     /* supports all built-in encodings */
     curl_easy_setopt(curl_handle, CURLOPT_ACCEPT_ENCODING, "");
 
-	/* Enable the cookie engine without reading any initial cookies */
+    /* Enable the cookie engine without reading any initial cookies */
     curl_easy_setopt(curl_handle, CURLOPT_COOKIEFILE, "");
     /* allow whatever auth the proxy speaks */
     curl_easy_setopt(curl_handle, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
@@ -456,7 +474,7 @@ void easy_handle_init(CURL* curl_handle, RECV_BUF *ptr, char *url) {
 }
 
 int process_html(CURL *curl_handle, RECV_BUF *p_recv_buf, char *url) {
-    char *eurl = NULL; 
+    char *eurl = NULL;
     curl_easy_getinfo(curl_handle, CURLINFO_EFFECTIVE_URL, &eurl);
 
     /* check if redirected url has already been visited */
@@ -469,7 +487,7 @@ int process_html(CURL *curl_handle, RECV_BUF *p_recv_buf, char *url) {
     if (!url_exists) {
         add_visited(url);
         find_http(curl_handle, p_recv_buf, url);
-		/* the url could have been redirected and not equal to eurl */
+        /* the url could have been redirected and not equal to eurl */
         if (strcmp(url, eurl) != 0) {
             add_visited(eurl);
         }
@@ -491,8 +509,8 @@ int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf, char *url) {
     int url_exists;
     url_exists = hsearch_r(item, FIND, &retval, htab);
     if (!url_exists) {
-		add_visited(url);
-		/* add it to a singly linked list of urls */
+        add_visited(url);
+        /* add it to a singly linked list of urls */
         url_node *new_png = malloc(sizeof(url_node));
         init_url(new_png, eurl);
         new_png->next = png_list;
@@ -538,8 +556,9 @@ void init_url(url_node *url, char *data) {
     url->next = NULL;
     if (data != NULL) {
         strcpy(url->url, data);
-    } else {
-        url -> url[0] = '\0';
+    }
+    else{
+        url->url[0] = '\0';
     }
 }
 
@@ -566,20 +585,20 @@ void web_crawl() {
             if (still_running == 0){
                 break;
             }
-        } while (numfds == 0); 
+        } while (numfds == 0);
         /* process resulting messages */
         while ((msg = curl_multi_info_read(cm, &msgs_left)) && png_num > 0){
             if (msg->msg == CURLMSG_DONE){
                 eh = msg->easy_handle;
                 return_code = msg->data.result;
                 int index = find_connection(eh);
-                printf("processing index %d\n", index);
-            	if (index == -1) continue;
+                /* printf("processing index %d\n", index); */
+                if (index == -1) continue;
                 if (return_code == CURLE_OK && curl_handles[index].buf != NULL && curl_handles[index].buf->size > 0) {
-					process_data(eh, curl_handles[index].buf, curl_handles[index].url);
+                    process_data(eh, curl_handles[index].buf, curl_handles[index].url);
                 } else {
                     /* broken link */
-					add_visited(curl_handles[index].url);
+                    add_visited(curl_handles[index].url);
                 }
                 /* remove handle */
                 recv_buf_cleanup(curl_handles[index].buf);
@@ -588,27 +607,25 @@ void web_crawl() {
                 curl_easy_cleanup(curl_handles[index].curl);
             }
         }
-		if (still_running == 0 && frontier_list == NULL) break;
-		else get_url();
-	}
+        if (still_running == 0 && frontier_list == NULL) break;
+        else get_url();
+    }
 }
 
 void get_url() {
-    RECV_BUF *recv_buf;
     for (int i = 0; i < conc_num; i++) {
-	    if (curl_handles[i].url[0] == '\0') {
-		    char *frontier_url = strdup(frontier_list->url);
-		    pop_frontiers();
-		    recv_buf = malloc(sizeof(RECV_BUF));
-		    recv_buf_init(recv_buf, BUF_SIZE);
-		    curl_handles[i].curl = curl_easy_init();
-		    curl_handles[i].buf = recv_buf;
-		    strcpy(curl_handles[i].url, frontier_url);
-		    printf("popped url: %s\n", curl_handles[i].url);
-		    easy_handle_init(curl_handles[i].curl, curl_handles[i].buf,curl_handles[i].url); 
-		    free(frontier_url);
-	    }
-	    if (frontier_list == NULL) break;
+        if (frontier_list == NULL) break;
+        if (curl_handles[i].url[0] == '\0') {
+            char *frontier_url = strdup(frontier_list->url);
+            pop_frontiers();
+            curl_handles[i].curl = curl_easy_init();
+            curl_handles[i].buf = malloc(sizeof(RECV_BUF));
+            recv_buf_init(curl_handles[i].buf, BUF_SIZE);
+            strcpy(curl_handles[i].url, frontier_url);
+            /* printf("popped url: %s\n", curl_handles[i].url); */
+            easy_handle_init(curl_handles[i].curl, curl_handles[i].buf, curl_handles[i].url);
+            free(frontier_url);
+        }
     }
 }
 
@@ -619,7 +636,7 @@ void write_png(){
     while(cur != NULL){
         fwrite(cur->url, 1, strlen(cur->url), fp);
         fprintf(fp, "\n");
-        cur = cur->next;        
+        cur = cur->next;
     }
     fclose(fp);
 }
@@ -639,7 +656,7 @@ int is_png(RECV_BUF *data) {
     char* png_id = "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A";
     memcpy(file_signature, data->buf, 8);
     if (memcmp(png_id, file_signature,8) == 0) {
-		png_file = 1;
+        png_file = 1;
     }
     free(file_signature);
     return png_file;
@@ -649,8 +666,8 @@ int is_png(RECV_BUF *data) {
 int find_connection(CURL *eh) {
     for (int i = 0; i < conc_num; i++){
         if (curl_handles[i].url[0] != '\0' && curl_handles[i].curl == eh) {
-			return i;
-		}
+            return i;
+        }
     }
     return -1;
 }
